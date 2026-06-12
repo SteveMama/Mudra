@@ -1,0 +1,16 @@
+{
+  "name": "mudra",
+  "version": "1.0.0",
+  "description": "Mudra Live Translate is a browser-first MVP for sign-to-text communication. This version focuses on:",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.35"
+  }
+}

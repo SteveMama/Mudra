@@ -1,0 +1,76 @@
+export const DEMO_PHRASES = [
+  {
+    id: "hello",
+    english: "Hello, how are you?",
+    translations: {
+      en: "Hello, how are you?",
+      hi: "नमस्ते, आप कैसे हैं?",
+      te: "నమస్తే, మీరు ఎలా ఉన్నారు?",
+      es: "Hola, ¿cómo estás?",
+      fr: "Bonjour, comment allez-vous ?",
+      ar: "مرحبا، كيف حالك؟",
+    },
+    tokens: ["Open_Palm", "Open_Palm"],
+  },
+  {
+    id: "help",
+    english: "Please help me.",
+    translations: {
+      en: "Please help me.",
+      hi: "कृपया मेरी मदद कीजिए।",
+      te: "దయచేసి నాకు సహాయం చేయండి.",
+      es: "Por favor, ayúdame.",
+      fr: "S'il vous plaît, aidez-moi.",
+      ar: "من فضلك ساعدني.",
+    },
+    tokens: ["Closed_Fist", "Open_Palm"],
+  },
+  {
+    id: "water",
+    english: "I need water.",
+    translations: {
+      en: "I need water.",
+      hi: "मुझे पानी चाहिए।",
+      te: "నాకు నీళ్లు కావాలి.",
+      es: "Necesito agua.",
+      fr: "J'ai besoin d'eau.",
+      ar: "أحتاج إلى ماء.",
+    },
+    tokens: ["Pointing_Up", "Open_Palm"],
+  },
+  {
+    id: "thankYou",
+    english: "Thank you.",
+    translations: {
+      en: "Thank you.",
+      hi: "धन्यवाद।",
+      te: "ధన్యవాదాలు.",
+      es: "Gracias.",
+      fr: "Merci.",
+      ar: "شكرا لك.",
+    },
+    tokens: ["Victory", "Open_Palm"],
+  },
+  {
+    id: "emergency",
+    english: "This is an emergency.",
+    translations: {
+      en: "This is an emergency.",
+      hi: "यह एक आपातकाल है।",
+      te: "ఇది అత్యవసర పరిస్థితి.",
+      es: "Esto es una emergencia.",
+      fr: "C'est une urgence.",
+      ar: "هذه حالة طوارئ.",
+    },
+    tokens: ["Closed_Fist", "Closed_Fist"],
+  },
+];
+
+export const SUPPORTED_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "hi", label: "Hindi" },
+  { code: "te", label: "Telugu" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "ar", label: "Arabic" },
+];

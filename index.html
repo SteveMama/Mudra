@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mudra Live Translate</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Real-time sign-to-speech prototype</p>
+          <h1>Mudra Live Translate</h1>
+          <p class="hero-copy">
+            Browser-first sign capture with English output and translation into
+            Hindi, Telugu, Spanish, French, and Arabic.
+          </p>
+        </div>
+        <div class="hero-card">
+          <p class="hero-card-label">Current mode</p>
+          <strong id="engineMode">Loading hand landmarks</strong>
+          <p id="engineHint">
+            Preparing the landmark pipeline for a future ASL classifier.
+          </p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel video-panel">
+          <div class="panel-header">
+            <h2>Camera</h2>
+            <div class="status-row">
+              <span class="status-dot" id="cameraDot"></span>
+              <span id="cameraStatus">Camera idle</span>
+            </div>
+          </div>
+
+          <div class="video-stack">
+            <video id="camera" autoplay playsinline muted></video>
+            <canvas id="overlay"></canvas>
+            <div class="empty-state" id="videoEmptyState">
+              Start the camera, then click record and sign inside the frame.
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="startCameraBtn" class="primary">Start camera</button>
+            <button id="stopCameraBtn" class="secondary" disabled>
+              Stop camera
+            </button>
+            <button id="recordBtn" class="accent" disabled>Record sign</button>
+            <button id="clearBtn" class="ghost">Clear</button>
+          </div>
+
+          <div class="helper-grid">
+            <div>
+              <p class="helper-label">Recognition state</p>
+              <p id="recognitionState">Waiting for camera</p>
+            </div>
+            <div>
+              <p class="helper-label">Hands detected</p>
+              <p id="gestureToken">0</p>
+            </div>
+            <div>
+              <p class="helper-label">Sequence frames</p>
+              <p id="confidenceValue">0</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel output-panel">
+          <div class="panel-header">
+            <h2>Translation</h2>
+            <label class="language-picker">
+              <span>Target language</span>
+              <select id="languageSelect"></select>
+            </label>
+          </div>
+
+          <div class="transcript-block">
+            <p class="block-label">Detected English</p>
+            <p id="englishTranscript" class="transcript">
+              Record a single ASL word to query the downloaded OpenHands model.
+            </p>
+          </div>
+
+          <div class="transcript-block">
+            <p class="block-label">Translated output</p>
+            <p id="translatedTranscript" class="transcript accent-text">
+              The local OpenHands checkpoint will return an English gloss after recording stops.
+            </p>
+          </div>
+
+          <div class="transcript-block compact">
+            <div class="panel-header mini">
+              <p class="block-label">Session log</p>
+              <button id="speakBtn" class="ghost small" disabled>
+                Speak output
+              </button>
+            </div>
+            <ul id="sessionLog" class="session-log"></ul>
+          </div>
+
+          <div class="transcript-block compact">
+            <div class="panel-header mini">
+              <p class="block-label">Demo phrase</p>
+            </div>
+            <div class="demo-controls">
+              <select id="demoPhraseSelect"></select>
+              <button id="runDemoBtn" class="secondary">Run demo phrase</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <section class="panel notes-panel">
+        <div class="panel-header">
+          <h2>MVP notes</h2>
+        </div>
+        <div class="notes-grid">
+          <article>
+            <h3>What works now</h3>
+            <p>
+              Live camera capture, OpenHands-compatible pose extraction,
+              local WLASL checkpoint inference, and multilingual UI output.
+            </p>
+          </article>
+          <article>
+            <h3>What comes next</h3>
+            <p>
+              Improve accuracy with signer adaptation, phrase-level models,
+              and better translation beyond isolated word glosses.
+            </p>
+          </article>
+          <article>
+            <h3>Cost control</h3>
+            <p>
+              Keep recognition on-device and use a server only for optional
+              translation or analytics when needed.
+            </p>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
