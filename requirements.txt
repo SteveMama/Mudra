@@ -1,0 +1,9 @@
+torch
+torchvision
+mediapipe
+opencv-python
+tensorflow
+omegaconf
+groq
+python-dotenv
+numpy

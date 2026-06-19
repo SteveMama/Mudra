@@ -1,287 +1,167 @@
 # Mudra Live Translate
 
-Mudra Live Translate is a local prototype for sign-to-text communication.
+Real-time ASL-to-text in the browser. Sign a word, hold still, get an English gloss and an instant translation into 18 languages — powered by a local ST-GCN model and Groq's free LLM API.
 
-The app currently combines:
+> **macOS + Safari only** for now. Chrome's WebGL is disabled on some Macs; Safari works reliably.
 
-- a browser UI for camera capture
-- MediaPipe hand and pose landmark extraction in the browser
-- a local Python inference server
-- a downloaded `OpenHands` `WLASL LSTM` checkpoint for isolated-word ASL gloss prediction
-- a simple translation layer for English, Hindi, Telugu, Spanish, French, and Arabic
+---
 
-This is an honest prototype, not a full sign-language translator.
+## Quick start
 
-## Current state
+```bash
+git clone https://github.com/SteveMama/Mudra.git
+cd Mudra
+bash setup.sh
+```
 
-What the app does today:
+`setup.sh` does everything in one shot:
 
-- starts the webcam in the browser
-- records a short signing clip when you press `Record sign`
-- extracts an OpenHands-compatible 27-point pose sequence from each frame
-- sends the recorded sequence to `/api/infer`
-- runs the local OpenHands `WLASL` model on CPU
-- returns the top predicted English gloss
-- shows a translated output in the selected language
-- lets you play the translated text with browser speech synthesis
+- creates a Python venv (`.venv-mudra`)
+- installs all Python packages
+- installs npm packages for the browser frontend
+- downloads the 4 MediaPipe landmark models
+- downloads the Kaggle ASL fingerspelling model (39 MB)
+- prompts for your Groq API key and saves it to `.env`
 
-What it does not do today:
+Then run the server:
 
-- continuous sentence translation
-- full ASL conversation understanding
-- reliable live webcam recognition for arbitrary signing
-- fingerspelling recognition
-- cloud translation or LLM-backed translation
-- user adaptation or calibration
+```bash
+.venv-mudra/bin/python server.py
+```
 
-## Important limitation
+Open **Safari** at `http://127.0.0.1:4173`, click **Start camera**, and sign.
 
-The downloaded model is an **isolated-word ASL recognition** checkpoint, not a sentence-level translation model.
+---
 
-That means the current app is only attempting:
+## Prerequisites
 
-`single signed word -> English gloss -> translated display text`
+| Requirement | Notes |
+|---|---|
+| macOS | Required for Safari camera access |
+| Python 3.9+ | `brew install python` if needed |
+| Node.js + npm | For the browser frontend JS — `brew install node` |
+| Groq API key | Free at [console.groq.com](https://console.groq.com) |
 
-It is **not** doing:
+---
 
-`free-form ASL sentence -> fluent English sentence -> multilingual translation`
+## How it works
 
-Accuracy is also limited because the public `WLASL` checkpoint was trained on benchmark data, not on your specific webcam setup, background, framing, or signing style.
+### Sign detection (browser)
 
-## Model in use
+1. **MediaPipe** runs in Safari — hand, pose, and face landmarks extracted every frame on CPU
+2. **Sign boundary detector** watches wrist velocity — orange border fires when you hold a sign still for ~0.5 s
+3. Frames are sent to the local Python server for inference
 
-The active model path is:
+### Inference (local Python server)
 
-- project: `AI4Bharat/OpenHands`
-- dataset family: `WLASL`
-- architecture: `ST-GCN`
-- checkpoint: `assets/openhands/wlasl_stgcn/wlasl/st_gcn/epoch=212-step=95210.ckpt`
+Two modes, toggled by the dropdown:
 
-The local server loads:
+| Mode | Model | What it recognises |
+|---|---|---|
+| Word signs | ST-GCN (OpenHands / WLASL 2000) | 2,000 ASL words |
+| Fingerspelling | Squeezeformer TFLite (Kaggle 1st place) | A–Z letter sequences |
 
-- config: `assets/openhands/wlasl_stgcn/wlasl/st_gcn/config.yaml`
-- metadata: `assets/openhands/wlasl_metadata/splits/asl2000.json`
+### Translation (Groq cloud)
 
-The backend applies OpenHands pose normalization before inference and returns the top 5 gloss predictions.
+Detected English text is sent to **Groq** (`llama-3.1-8b-instant`) and translated in real time. The translation panel supports 18 languages.
 
-## How the app works
+---
 
-### 1. Browser capture
+## API endpoints
 
-The frontend uses:
+All served by `server.py` on `http://127.0.0.1:4173`.
 
-- `getUserMedia` for webcam access
-- `@mediapipe/tasks-vision`
-- `HandLandmarker`
-- `PoseLandmarker`
+### `POST /api/infer`
+Word-sign inference (ST-GCN).
 
-The browser collects:
+```json
+// request
+{ "frames": [ [{"x": 0.1, "y": 0.2}, ...] ] }   // 27 points × ≥8 frames
 
-- 7 selected pose landmarks
-- 10 selected left-hand landmarks
-- 10 selected right-hand landmarks
+// response
+{ "topPrediction": {"gloss": "hello", "score": 0.82}, "predictions": [...], "framesUsed": 36 }
+```
 
-These are assembled into a 27-point frame sequence compatible with the current OpenHands integration.
+### `POST /api/fingerspell`
+Fingerspelling inference (TFLite Squeezeformer).
 
-### 2. Local inference server
+```json
+// request
+{ "frames": [ {"face76": [...], "leftHand": [...], "rightHand": [...], "pose12": [...]} ] }
 
-`server.py` serves both:
+// response
+{ "text": "hello", "framesUsed": 42 }
+```
 
-- the static frontend
-- the inference API at `POST /api/infer`
+### `POST /api/translate`
+Groq-powered translation.
 
-The server:
+```json
+// request
+{ "text": "hello", "lang": "hi" }
 
-- validates the incoming frame sequence
-- requires at least 8 frames
-- converts frames into a tensor
-- normalizes the pose sequence
-- runs the OpenHands checkpoint on CPU
-- returns top-k gloss predictions and scores
+// response
+{ "translated": "नमस्ते", "lang": "hi" }
+```
 
-### 3. Translation layer
+---
 
-The translation layer is currently minimal.
+## Supported languages
 
-It only has explicit translations for the demo phrases in `src/demoPhrases.js`. For any model prediction that is not one of those phrases, the translated output currently falls back to the English text unchanged.
+English · Hindi · Telugu · Tamil · Spanish · French · German · Italian · Portuguese · Arabic · Chinese · Japanese · Korean · Russian · Turkish · Vietnamese · Indonesian · Swahili
 
-That means:
-
-- demo phrases translate properly
-- model-predicted glosses usually appear unchanged in non-English languages
-
-## Current UI behavior
-
-The main UI supports:
-
-- `Start camera`
-- `Stop camera`
-- `Record sign`
-- `Clear`
-- target language selection
-- `Speak output`
-- demo phrase playback
-
-During recording:
-
-- the app draws a simple landmark overlay
-- buffers captured frames
-- shows hand count and buffered frame count
-
-When recording stops:
-
-- the app calls the local inference API
-- displays the top English prediction
-- shows the translated output
-- appends the result to the session log
-
-There is also still a demo phrase section in the UI. That path is manual and separate from real model inference.
+---
 
 ## Project structure
 
-Key files:
-
-- `index.html`
-  - main UI shell
-- `src/main.js`
-  - browser state, recording flow, API calls, translation rendering, speech output
-- `src/visionController.js`
-  - MediaPipe setup and 27-point feature extraction
-- `src/modelAdapter.js`
-  - recorded sequence buffer
-- `src/translationService.js`
-  - simple translation lookup and fallback behavior
-- `src/demoPhrases.js`
-  - demo phrases and supported language labels
-- `src/styles.css`
-  - styling
-- `server.py`
-  - static server plus OpenHands inference endpoint
-- `scripts/verify_openhands_wlasl_lstm.py`
-  - checkpoint load verification helper
-- `scripts/run_openhands_wlasl_lstm.py`
-  - local model runner helper
-- `external/OpenHands`
-  - cloned upstream OpenHands repo used for model/runtime code
-
-## Requirements
-
-Frontend dependency:
-
-- `@mediapipe/tasks-vision`
-
-Backend runtime currently assumes availability of:
-
-- `python3`
-- `torch`
-- `omegaconf`
-- OpenHands import path from `external/OpenHands`
-
-The repository also expects these local assets to exist:
-
-- `models/hand_landmarker.task`
-- `models/pose_landmarker_lite.task`
-- OpenHands checkpoint and metadata under `assets/openhands/`
-
-## Run locally
-
-This app should be run through `server.py`, not `python3 -m http.server`, because the current frontend depends on the local inference endpoint.
-
-From the project root:
-
-```bash
-python3 server.py
+```
+Mudra/
+├── setup.sh                  # one-shot setup script
+├── server.py                 # Python server — inference + translation + static files
+├── app.py                    # native macOS OpenCV app (alternative to browser)
+├── requirements.txt          # Python dependencies
+├── index.html                # browser UI
+├── src/
+│   ├── main.js               # app state, sign callback, phrase accumulation
+│   ├── visionController.js   # MediaPipe landmark extraction
+│   ├── modelAdapter.js       # sign boundary detector
+│   ├── translationService.js # calls /api/translate
+│   ├── demoPhrases.js        # language list
+│   └── styles.css
+├── models/                   # MediaPipe .task files (downloaded by setup.sh)
+├── assets/
+│   ├── openhands/            # ST-GCN checkpoint + WLASL metadata (in repo)
+│   └── fingerspell/          # TFLite model (downloaded by setup.sh)
+└── .env                      # GROQ_API_KEY (gitignored, created by setup.sh)
 ```
 
-Then open:
+---
 
-```text
-http://127.0.0.1:4173
-```
+## Try these signs first (Word signs mode)
 
-If needed, you can also use:
+The ST-GCN model knows 2,000 ASL words. Good ones to start with:
 
-```text
-http://localhost:4173
-```
+`hello` · `yes` · `no` · `thank you` · `help` · `please` · `sorry` · `good` · `bad` · `water` · `food` · `home` · `work` · `school` · `friend` · `family` · `love` · `name`
 
-Camera access requires running on `localhost`/`127.0.0.1` or over `https`.
+**How to trigger:**
+1. Show your hand — green skeleton should appear immediately
+2. Make the sign with a clear motion (velocity bar fills past the white tick)
+3. **Hold still** for ~0.5 s → orange border fires → result appears
 
-## API
+---
 
-### `POST /api/infer`
+## Limitations
 
-Request body:
+- **Accuracy**: The WLASL ST-GCN checkpoint was trained on benchmark video, not your webcam/background/style. Expect ~30–50% top-1 accuracy on clean signs.
+- **Isolated words only**: Word signs mode recognises one sign at a time, not continuous sentences.
+- **macOS + Safari**: Chrome's WebGL fails on some machines. Safari required for browser mode.
+- **CPU inference**: No GPU acceleration — ~50–100 ms per sign.
 
-```json
-{
-  "frames": [
-    [
-      { "x": 0.1, "y": 0.2 },
-      { "x": 0.2, "y": 0.3 }
-    ]
-  ]
-}
-```
-
-Actual requirements:
-
-- `frames` must be a non-empty array
-- each frame must contain exactly 27 points
-- each point is expected to contain numeric `x` and `y`
-- at least 8 frames are required for inference
-
-Response shape:
-
-```json
-{
-  "topPrediction": {
-    "gloss": "hello",
-    "score": 0.42
-  },
-  "predictions": [
-    { "gloss": "hello", "score": 0.42 }
-  ],
-  "framesUsed": 36
-}
-```
-
-## Known issues
-
-- The current model is not accurate enough for dependable real-world communication.
-- The app labels output as “translated,” but most model predictions are not truly translated unless they match one of the demo phrases.
-- The UI still mixes real inference with demo content.
-- The landmark overlay currently emphasizes hands and does not fully visualize the 27-point inference tensor.
-- Inference happens only after recording stops; there is no true streaming decode.
-- The backend runs on CPU and may be slow on weaker machines.
-- No automated tests are configured in `package.json`.
-
-## Recommended usage right now
-
-Use the current app as:
-
-- a proof of local sign-capture plumbing
-- a proof that a public OpenHands checkpoint can be called from the browser flow
-- a prototype for isolated-word experimentation
-
-Do not treat it as:
-
-- a production ASL translator
-- a complete accessibility communication tool
-- a benchmark for real-world ASL quality
-
-## Next practical improvements
-
-The highest-value next changes are:
-
-1. Remove or clearly separate demo translation behavior from real model output.
-2. Show top-3 or top-5 predictions in the UI instead of only the top gloss.
-3. Add a better translation backend for arbitrary English gloss text.
-4. Add a second recognizer path for fingerspelling.
-5. Replace the current isolated-word baseline with a stronger open-source checkpoint if a usable one is confirmed.
+---
 
 ## Sources
 
-- OpenHands: [https://github.com/AI4Bharat/OpenHands](https://github.com/AI4Bharat/OpenHands)
-- OpenHands paper: [https://arxiv.org/abs/2110.05877](https://arxiv.org/abs/2110.05877)
-- WLASL dataset: [https://dxli94.github.io/WLASL/](https://dxli94.github.io/WLASL/)
+- [AI4Bharat OpenHands](https://github.com/AI4Bharat/OpenHands)
+- [WLASL dataset](https://dxli94.github.io/WLASL/)
+- [Kaggle ASL Fingerspelling — 1st place solution](https://github.com/ChristofHenkel/kaggle-asl-fingerspelling-1st-place-solution)
+- [Groq](https://console.groq.com)

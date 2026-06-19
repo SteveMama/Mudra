@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head><title>MP test</title></head>
+<body>
+<video id="v" autoplay playsinline muted style="width:480px"></video>
+<canvas id="c" width="640" height="480" style="width:320px"></canvas>
+<pre id="log" style="font-size:12px;background:#eee;padding:8px;max-height:300px;overflow:auto"></pre>
+<script type="module">
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent = new Date().toISOString().slice(11,23) + ' ' + msg + '\n' + el.textContent;
+}
+log('start');
+try {
+  const { FilesetResolver, HandLandmarker } = await import('./node_modules/@mediapipe/tasks-vision/vision_bundle.mjs');
+  const vision = await FilesetResolver.forVisionTasks('./node_modules/@mediapipe/tasks-vision/wasm');
+  const hl = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: './models/hand_landmarker.task', delegate: 'CPU' },
+    runningMode: 'VIDEO', numHands: 2,
+  });
+  log('ready — starting camera');
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  const v = document.getElementById('v');
+  v.srcObject = stream;
+  await v.play();
+
+  // Draw each frame to a 2D canvas; pass canvas instead of video element
+  const snap = document.getElementById('c');
+  const ctx = snap.getContext('2d');
+  log('camera live — show your hands');
+
+  let lastTime = -1, lastLog = 0;
+  function loop() {
+    if (v.currentTime !== lastTime && v.readyState >= 2) {
+      lastTime = v.currentTime;
+      snap.width = v.videoWidth || 640;
+      snap.height = v.videoHeight || 480;
+      ctx.drawImage(v, 0, 0);
+      try {
+        const r = hl.detectForVideo(snap, performance.now());
+        const n = r?.landmarks?.length ?? 0;
+        if (Date.now() - lastLog > 500) {
+          log(n > 0 ? 'HANDS: ' + n : 'no hands');
+          lastLog = Date.now();
+        }
+      } catch(e) { log('detect error: ' + e); }
+    }
+    requestAnimationFrame(loop);
+  }
+  loop();
+} catch(e) { log('ERROR: ' + e); console.error(e); }
+</script>
+</body>
+</html>

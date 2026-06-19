@@ -2,7 +2,16 @@ import { TranslationService } from "./translationService.js";
 import { SUPPORTED_LANGUAGES } from "./demoPhrases.js";
 import { VisionController } from "./visionController.js";
 
-const PHRASE_IDLE_RESET_MS = 4000; // start a new phrase after 4 s of silence
+const PHRASE_IDLE_RESET_MS = 4000;
+
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17],
+];
 
 const elements = {
   camera: document.querySelector("#camera"),
@@ -13,12 +22,15 @@ const elements = {
   clearBtn: document.querySelector("#clearBtn"),
   speakBtn: document.querySelector("#speakBtn"),
   languageSelect: document.querySelector("#languageSelect"),
+  modeSelect: document.querySelector("#modeSelect"),
   englishTranscript: document.querySelector("#englishTranscript"),
   translatedTranscript: document.querySelector("#translatedTranscript"),
   sessionLog: document.querySelector("#sessionLog"),
   recognitionState: document.querySelector("#recognitionState"),
   gestureToken: document.querySelector("#gestureToken"),
   confidenceValue: document.querySelector("#confidenceValue"),
+  handsValue: document.querySelector("#handsValue"),
+  velocityValue: document.querySelector("#velocityValue"),
   cameraStatus: document.querySelector("#cameraStatus"),
   cameraDot: document.querySelector("#cameraDot"),
   engineMode: document.querySelector("#engineMode"),
@@ -29,8 +41,9 @@ const state = {
   stream: null,
   frameLoopId: 0,
   selectedLanguage: "hi",
+  mode: "signs",           // "signs" | "fingerspell"
   pendingInference: false,
-  phraseGlosses: [],    // accumulated glosses in current phrase
+  phraseTokens: [],
   lastWordTime: 0,
   latestEnglish: "",
 };
@@ -38,36 +51,60 @@ const state = {
 const translationService = new TranslationService();
 const drawingContext = elements.overlay.getContext("2d");
 
-// ── inference callback ────────────────────────────────────────────────────────
+// ── inference ─────────────────────────────────────────────────────────────────
 
-async function handleSignReady(frames) {
-  if (state.pendingInference) return; // drop overlapping calls
+async function handleSignReady(frames27, fullFrames) {
+  if (state.pendingInference) return;
   state.pendingInference = true;
-  elements.recognitionState.textContent = "Running inference…";
+
+  const isFS = state.mode === "fingerspell";
+  elements.recognitionState.textContent = isFS ? "Decoding fingerspelling…" : "Running inference…";
 
   try {
-    const response = await fetch("/api/infer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ frames }),
-    });
-    const payload = await response.json();
+    let word = null;
+    let confidence = null;
 
-    if (!response.ok) throw new Error(payload.error ?? "Inference failed");
+    if (isFS) {
+      const resp = await fetch("/api/fingerspell", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frames: fullFrames }),
+      });
+      const payload = await resp.json();
+      if (!resp.ok) throw new Error(payload.error ?? "Fingerspelling failed");
+      word = payload.text;
+      confidence = null; // Squeezeformer doesn't emit a score
+    } else {
+      const resp = await fetch("/api/infer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frames: frames27 }),
+      });
+      const payload = await resp.json();
+      if (!resp.ok) throw new Error(payload.error ?? "Inference failed");
+      word = payload.topPrediction.gloss;
+      confidence = payload.topPrediction.score;
+    }
 
-    const { gloss, score } = payload.topPrediction;
-    elements.gestureToken.textContent = gloss;
-    elements.confidenceValue.textContent = `${Math.round(score * 100)}%`;
+    if (!word) {
+      elements.recognitionState.textContent = "Watching…";
+      return;
+    }
 
-    // Accumulate into current phrase, resetting after a long pause
+    elements.gestureToken.textContent = word;
+    elements.confidenceValue.textContent = confidence !== null
+      ? `${Math.round(confidence * 100)}%`
+      : "—";
+
+    // Phrase accumulation: reset after idle gap
     const now = Date.now();
-    if (state.phraseGlosses.length > 0 && now - state.lastWordTime > PHRASE_IDLE_RESET_MS) {
+    if (state.phraseTokens.length > 0 && now - state.lastWordTime > PHRASE_IDLE_RESET_MS) {
       finalisePhrase();
     }
-    state.phraseGlosses.push(gloss);
+    state.phraseTokens.push(word);
     state.lastWordTime = now;
 
-    const phraseText = state.phraseGlosses.join(" ");
+    const phraseText = state.phraseTokens.join(" ");
     state.latestEnglish = phraseText;
     elements.englishTranscript.textContent = phraseText;
 
@@ -75,25 +112,25 @@ async function handleSignReady(frames) {
     elements.translatedTranscript.textContent = translated;
     elements.speakBtn.disabled = false;
     elements.recognitionState.textContent = "Watching…";
-  } catch (error) {
+  } catch (err) {
     elements.recognitionState.textContent = "Inference error";
-    elements.englishTranscript.textContent = String(error.message ?? error);
+    elements.englishTranscript.textContent = String(err.message ?? err);
   } finally {
     state.pendingInference = false;
   }
 }
 
 function finalisePhrase() {
-  if (!state.phraseGlosses.length) return;
-  const text = state.phraseGlosses.join(" ");
-  const translated = elements.translatedTranscript.textContent;
-  addLogEntry(text, translated);
-  state.phraseGlosses = [];
+  if (!state.phraseTokens.length) return;
+  addLogEntry(state.phraseTokens.join(" "), elements.translatedTranscript.textContent);
+  state.phraseTokens = [];
 }
 
 // ── gesture callback ──────────────────────────────────────────────────────────
 
 function handleGestureDetected({ gesture, score }) {
+  // Only surface this in signs mode; in fingerspell mode hand shapes are letter candidates
+  if (state.mode !== "signs") return;
   elements.gestureToken.textContent = gesture;
   elements.confidenceValue.textContent = `${Math.round(score * 100)}%`;
 }
@@ -116,46 +153,111 @@ function populateLanguageSelect() {
 
 function resizeCanvasToVideo() {
   const { videoWidth: w, videoHeight: h } = elements.camera;
-  if (w && h) {
-    elements.overlay.width = w;
-    elements.overlay.height = h;
-  }
+  if (w && h) { elements.overlay.width = w; elements.overlay.height = h; }
 }
 
-const STATE_COLORS = {
-  idle: "rgba(255,255,255,0.6)",
-  signing: "rgba(201,95,55,0.9)",
-};
-
-function drawOverlay(landmarkSets = [], detectorState = "idle") {
-  drawingContext.clearRect(0, 0, elements.overlay.width, elements.overlay.height);
+function drawOverlay(hands = [], detectorState = "idle", velocity = 0, handsCount = 0) {
+  const W = elements.overlay.width;
+  const H = elements.overlay.height;
+  drawingContext.clearRect(0, 0, W, H);
   drawingContext.save();
   drawingContext.scale(-1, 1);
-  drawingContext.translate(-elements.overlay.width, 0);
+  drawingContext.translate(-W, 0);
 
-  // Guide box — orange while signing, white otherwise
-  drawingContext.strokeStyle = STATE_COLORS[detectorState] ?? STATE_COLORS.idle;
-  drawingContext.lineWidth = detectorState === "signing" ? 4 : 2;
-  drawingContext.strokeRect(
-    elements.overlay.width * 0.18,
-    elements.overlay.height * 0.12,
-    elements.overlay.width * 0.64,
-    elements.overlay.height * 0.76,
-  );
+  const signing = detectorState === "signing";
+  const hasHands = handsCount > 0;
 
-  drawingContext.fillStyle = STATE_COLORS.signing;
-  for (const hand of landmarkSets) {
-    for (const point of hand) {
+  // Bounding box — orange when signing, green when hands visible, white when idle
+  drawingContext.strokeStyle = signing
+    ? "rgba(201,95,55,0.95)"
+    : hasHands
+    ? "rgba(45,175,90,0.8)"
+    : "rgba(255,255,255,0.35)";
+  drawingContext.lineWidth = signing ? 4 : hasHands ? 3 : 1.5;
+  drawingContext.strokeRect(W * 0.18, H * 0.12, W * 0.64, H * 0.76);
+
+  // Hand skeleton
+  const skelColor = signing ? "rgba(201,95,55,0.85)" : "rgba(45,220,100,0.85)";
+  const dotColor  = signing ? "rgba(255,140,80,1)"    : "rgba(80,255,140,1)";
+
+  for (const hand of hands) {
+    // Connections
+    drawingContext.strokeStyle = skelColor;
+    drawingContext.lineWidth = 2;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const pa = hand[a]; const pb = hand[b];
+      if (!pa || !pb) continue;
       drawingContext.beginPath();
-      drawingContext.arc(
-        point.x * elements.overlay.width,
-        point.y * elements.overlay.height,
-        4, 0, Math.PI * 2,
-      );
+      drawingContext.moveTo(pa.x * W, pa.y * H);
+      drawingContext.lineTo(pb.x * W, pb.y * H);
+      drawingContext.stroke();
+    }
+    // Landmark dots
+    drawingContext.fillStyle = dotColor;
+    for (const pt of hand) {
+      drawingContext.beginPath();
+      drawingContext.arc(pt.x * W, pt.y * H, 4, 0, Math.PI * 2);
       drawingContext.fill();
     }
   }
+
+  // Velocity bar along bottom of video
+  if (hasHands) {
+    const barW = W * 0.5;
+    const barX = W * 0.25;
+    const barY = H - 22;
+    const fillRatio = Math.min(velocity / 0.05, 1);
+    // Background track
+    drawingContext.fillStyle = "rgba(0,0,0,0.35)";
+    roundRect(drawingContext, barX, barY, barW, 8, 4);
+    drawingContext.fill();
+    // Fill
+    if (fillRatio > 0) {
+      drawingContext.fillStyle = signing ? "rgba(201,95,55,0.95)" : "rgba(45,220,100,0.95)";
+      roundRect(drawingContext, barX, barY, barW * fillRatio, 8, 4);
+      drawingContext.fill();
+    }
+    // Threshold tick
+    const tickX = barX + (0.007 / 0.05) * barW;
+    drawingContext.strokeStyle = "rgba(255,255,255,0.9)";
+    drawingContext.lineWidth = 1.5;
+    drawingContext.beginPath();
+    drawingContext.moveTo(tickX, barY - 3);
+    drawingContext.lineTo(tickX, barY + 11);
+    drawingContext.stroke();
+  }
+
   drawingContext.restore();
+
+  // "HANDS DETECTED" badge — drawn unmirrored
+  if (hasHands) {
+    drawingContext.save();
+    const label = `${handsCount} hand${handsCount > 1 ? "s" : ""} detected`;
+    drawingContext.font = "bold 12px 'IBM Plex Sans', sans-serif";
+    const tw = drawingContext.measureText(label).width;
+    const bx = W / 2 - tw / 2 - 8;
+    const by = 18;
+    drawingContext.fillStyle = signing ? "rgba(180,70,30,0.85)" : "rgba(30,120,60,0.85)";
+    roundRect(drawingContext, bx, by, tw + 16, 22, 6);
+    drawingContext.fill();
+    drawingContext.fillStyle = "#fff";
+    drawingContext.fillText(label, bx + 8, by + 15);
+    drawingContext.restore();
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 function setCameraLive(isLive) {
@@ -168,12 +270,9 @@ function setCameraLive(isLive) {
 
 function addLogEntry(english, translated) {
   const item = document.createElement("li");
-  const ts = new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  item.innerHTML = `<small>${ts}</small>${english}<br />${translated}`;
+  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const badge = `<span class="mode-badge">${state.mode === "fingerspell" ? "FS" : "ASL"}</span>`;
+  item.innerHTML = `<small>${ts} ${badge}</small>${english}<br />${translated}`;
   elements.sessionLog.prepend(item);
 }
 
@@ -186,17 +285,22 @@ async function handleFrame() {
     const result = visionController.capture(elements.camera, performance.now());
 
     if (result) {
-      drawOverlay(result.overlayHands, result.detectorState);
+      drawOverlay(result.overlayHands, result.detectorState, result.velocity, result.handsDetected);
 
-      // Status line
       if (!state.pendingInference) {
         if (result.detectorState === "signing") {
-          elements.recognitionState.textContent = `Signing — ${result.buffered} frames`;
+          const label = state.mode === "fingerspell" ? "Fingerspelling" : "Signing";
+          elements.recognitionState.textContent = `${label} — ${result.buffered} frames buffered`;
         } else if (result.handsDetected > 0) {
-          elements.recognitionState.textContent = "Hands detected — watching…";
+          elements.recognitionState.textContent = "Hands visible — move to sign, hold to complete";
         } else {
-          elements.recognitionState.textContent = "Watching for signs…";
+          elements.recognitionState.textContent = "No hands — show your hand(s) to the camera";
         }
+        // live helpers
+        elements.handsValue.textContent = result.handsDetected > 0
+          ? `${result.handsDetected} detected`
+          : "none";
+        elements.velocityValue.textContent = (result.velocity * 1000).toFixed(1);
       }
     }
   }
@@ -220,24 +324,17 @@ async function startCamera() {
     setCameraLive(true);
     elements.recognitionState.textContent = "Watching for signs…";
     handleFrame();
-  } catch (error) {
+  } catch (err) {
     elements.recognitionState.textContent = "Camera access failed";
-    elements.englishTranscript.textContent = "Camera permission was denied or unavailable.";
-    console.error(error);
+    elements.englishTranscript.textContent = "Camera permission denied or unavailable.";
   }
 }
 
 function stopCamera() {
-  if (state.frameLoopId) {
-    window.cancelAnimationFrame(state.frameLoopId);
-    state.frameLoopId = 0;
-  }
+  if (state.frameLoopId) { window.cancelAnimationFrame(state.frameLoopId); state.frameLoopId = 0; }
   visionController.reset();
   finalisePhrase();
-
-  if (state.stream) {
-    for (const track of state.stream.getTracks()) track.stop();
-  }
+  if (state.stream) { for (const t of state.stream.getTracks()) t.stop(); }
   state.stream = null;
   elements.camera.srcObject = null;
   drawingContext.clearRect(0, 0, elements.overlay.width, elements.overlay.height);
@@ -245,11 +342,9 @@ function stopCamera() {
   elements.recognitionState.textContent = "Waiting for camera";
 }
 
-// ── clear / speak ─────────────────────────────────────────────────────────────
-
 function clearSession() {
   visionController.reset();
-  state.phraseGlosses = [];
+  state.phraseTokens = [];
   state.latestEnglish = "";
   elements.englishTranscript.textContent = "No sign detected yet.";
   elements.translatedTranscript.textContent = "Signs will appear here as you sign.";
@@ -263,10 +358,10 @@ function clearSession() {
 function speakCurrentTranslation() {
   const text = elements.translatedTranscript.textContent;
   if (!text || text === "Signs will appear here as you sign.") return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = state.selectedLanguage;
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = state.selectedLanguage;
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  window.speechSynthesis.speak(utt);
 }
 
 // ── event listeners ───────────────────────────────────────────────────────────
@@ -275,21 +370,24 @@ elements.startCameraBtn.addEventListener("click", startCamera);
 elements.stopCameraBtn.addEventListener("click", stopCamera);
 elements.clearBtn.addEventListener("click", clearSession);
 elements.speakBtn.addEventListener("click", speakCurrentTranslation);
-elements.languageSelect.addEventListener("change", async (event) => {
-  state.selectedLanguage = event.target.value;
+
+elements.modeSelect.addEventListener("change", (e) => {
+  state.mode = e.target.value;
+  visionController.reset();
+  const label = state.mode === "fingerspell" ? "Fingerspelling mode" : "Word-sign mode";
+  elements.recognitionState.textContent = label + " — watching…";
+});
+
+elements.languageSelect.addEventListener("change", async (e) => {
+  state.selectedLanguage = e.target.value;
   if (state.latestEnglish) {
-    const translated = await translationService.translate(
-      state.latestEnglish,
-      state.selectedLanguage,
+    elements.translatedTranscript.textContent = await translationService.translate(
+      state.latestEnglish, state.selectedLanguage,
     );
-    elements.translatedTranscript.textContent = translated;
   }
 });
 
-window.addEventListener("resize", () => {
-  resizeCanvasToVideo();
-  drawOverlay();
-});
+window.addEventListener("resize", () => { resizeCanvasToVideo(); drawOverlay(); });
 window.addEventListener("beforeunload", stopCamera);
 
 // ── boot ──────────────────────────────────────────────────────────────────────

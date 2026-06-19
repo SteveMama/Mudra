@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mudra",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "$(ls .venv*sys/bin/python | head -1) server.py"],
+      "port": 4173,
+      "autoPort": false
+    }
+  ]
+}

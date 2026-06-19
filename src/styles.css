@@ -181,6 +181,27 @@ canvas {
   margin-top: 16px;
 }
 
+.mode-select {
+  border-radius: 999px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  min-width: unset;
+  cursor: pointer;
+}
+
+.mode-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
 .helper-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
@@ -295,6 +316,44 @@ select {
   display: block;
   color: var(--muted);
   margin-bottom: 4px;
+}
+
+.detection-hint {
+  margin: 10px 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+.vocab-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.vocab-chip {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.how-to-sign {
+  background: rgba(45,125,74,0.08);
+  border: 1px solid rgba(45,125,74,0.2);
+  border-radius: 18px;
+  padding: 16px 20px;
+  margin-top: 12px;
+}
+
+.how-to-sign ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+  line-height: 1.8;
 }
 
 .notes-panel {

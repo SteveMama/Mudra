@@ -1,4 +1,4 @@
-// Wrist + fingertip indices within the 27-point skeleton.
+// Wrist + fingertip indices within the 27-point skeleton for motion detection.
 // Left wrist=7, left fingertips=10,12,14,16; right wrist=17, right fingertips=20,22,24,26
 const MOTION_POINTS = [7, 10, 12, 14, 16, 17, 20, 22, 24, 26];
 
@@ -19,9 +19,11 @@ function frameVelocity(prev, curr) {
 
 export class SignBoundaryDetector {
   constructor(onSignReady) {
+    // onSignReady(frames27, fullFrames) — both are arrays of the same length
     this.onSignReady = onSignReady;
     this._state = "idle";
-    this._buffer = [];
+    this._buf27 = [];       // 27-point frames for ST-GCN
+    this._bufFull = [];     // full-landmark frames for fingerspelling
     this._holdCount = 0;
     this._prevFrame = null;
   }
@@ -32,13 +34,17 @@ export class SignBoundaryDetector {
 
   reset() {
     this._state = "idle";
-    this._buffer = [];
+    this._buf27 = [];
+    this._bufFull = [];
     this._holdCount = 0;
     this._prevFrame = null;
   }
 
+  // points27   – 27-point array for boundary detection
+  // handsDetected – number of hands visible
+  // fullFrame  – {face76, leftHand, rightHand, pose12} for fingerspelling
   // Returns { state, buffered, velocity }
-  pushFrame(points27, handsDetected) {
+  pushFrame(points27, handsDetected, fullFrame) {
     if (!this._prevFrame) {
       this._prevFrame = points27;
       return { state: this._state, buffered: 0, velocity: 0 };
@@ -51,12 +57,14 @@ export class SignBoundaryDetector {
     if (this._state === "idle") {
       if (moving) {
         this._state = "signing";
-        this._buffer = [points27];
+        this._buf27 = [points27];
+        this._bufFull = [fullFrame];
         this._holdCount = 0;
       }
     } else {
-      // "signing" state — collect frames
-      this._buffer.push(points27);
+      // signing state — collect frames
+      this._buf27.push(points27);
+      this._bufFull.push(fullFrame);
 
       if (!moving) {
         this._holdCount++;
@@ -67,21 +75,23 @@ export class SignBoundaryDetector {
         this._holdCount = 0;
       }
 
-      if (this._buffer.length >= MAX_SIGN_FRAMES) {
+      if (this._buf27.length >= MAX_SIGN_FRAMES) {
         this._fire();
       }
     }
 
-    return { state: this._state, buffered: this._buffer.length, velocity };
+    return { state: this._state, buffered: this._buf27.length, velocity };
   }
 
   _fire() {
-    const frames = this._buffer.slice();
+    const frames27 = this._buf27.slice();
+    const fullFrames = this._bufFull.slice();
     this._state = "idle";
-    this._buffer = [];
+    this._buf27 = [];
+    this._bufFull = [];
     this._holdCount = 0;
-    if (frames.length >= MIN_SIGN_FRAMES) {
-      this.onSignReady(frames);
+    if (frames27.length >= MIN_SIGN_FRAMES) {
+      this.onSignReady(frames27, fullFrames);
     }
   }
 }

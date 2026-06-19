@@ -53,23 +53,29 @@
           <div class="controls">
             <button id="startCameraBtn" class="primary">Start camera</button>
             <button id="stopCameraBtn" class="secondary" disabled>Stop camera</button>
-            <button id="clearBtn" class="ghost">Clear phrase</button>
+            <select id="modeSelect" class="mode-select">
+              <option value="signs">Word signs</option>
+              <option value="fingerspell">Fingerspelling</option>
+            </select>
+            <button id="clearBtn" class="ghost">Clear</button>
           </div>
 
           <div class="helper-grid">
             <div>
-              <p class="helper-label">Detection state</p>
-              <p id="recognitionState">Waiting for camera</p>
+              <p class="helper-label">Hands visible</p>
+              <p id="handsValue">—</p>
             </div>
             <div>
-              <p class="helper-label">Latest word</p>
-              <p id="gestureToken">—</p>
+              <p class="helper-label">Motion level</p>
+              <p id="velocityValue">—</p>
             </div>
             <div>
-              <p class="helper-label">Confidence</p>
-              <p id="confidenceValue">—</p>
+              <p class="helper-label">Latest word · conf</p>
+              <p id="gestureToken" style="margin:0">—</p>
+              <p id="confidenceValue" style="font-size:0.8rem;color:var(--muted);margin:0"></p>
             </div>
           </div>
+          <p id="recognitionState" class="detection-hint">Waiting for camera</p>
         </section>
 
         <section class="panel output-panel">
@@ -110,31 +116,55 @@
 
       <section class="panel notes-panel">
         <div class="panel-header">
-          <h2>MVP notes</h2>
+          <h2>How it works + what to sign</h2>
         </div>
         <div class="notes-grid">
           <article>
-            <h3>What works now</h3>
-            <p>
-              Continuous detection: automatic sign boundary detection via wrist
-              velocity, ST-GCN word inference per segment, gesture recognition
-              layer, and phrase accumulation with multilingual output.
-            </p>
+            <h3>How to trigger detection</h3>
+            <div class="how-to-sign">
+              <ol>
+                <li>Start the camera — green skeleton = hands tracked</li>
+                <li>Make an ASL sign with clear hand movement</li>
+                <li>Hold the sign still for ~0.5 s — orange border fires</li>
+                <li>Result appears in the Translation panel</li>
+              </ol>
+            </div>
           </article>
           <article>
-            <h3>Letter layer</h3>
-            <p>
-              The built-in gesture model covers 8 shapes. For full ASL
-              fingerspelling, integrate the Kaggle ASL Fingerspelling 1st-place
-              Squeezeformer (Apache-2.0, TFLite, MediaPipe-native).
+            <h3>Try these words (Word signs mode)</h3>
+            <p style="font-size:0.82rem;color:var(--muted);margin:0 0 4px">
+              Signs the ST-GCN model knows (2000 total from WLASL):
             </p>
+            <div class="vocab-grid">
+              <span class="vocab-chip">hello</span>
+              <span class="vocab-chip">thank you</span>
+              <span class="vocab-chip">yes</span>
+              <span class="vocab-chip">no</span>
+              <span class="vocab-chip">help</span>
+              <span class="vocab-chip">please</span>
+              <span class="vocab-chip">sorry</span>
+              <span class="vocab-chip">good</span>
+              <span class="vocab-chip">bad</span>
+              <span class="vocab-chip">like</span>
+              <span class="vocab-chip">love</span>
+              <span class="vocab-chip">name</span>
+              <span class="vocab-chip">water</span>
+              <span class="vocab-chip">food</span>
+              <span class="vocab-chip">home</span>
+              <span class="vocab-chip">work</span>
+              <span class="vocab-chip">play</span>
+              <span class="vocab-chip">school</span>
+              <span class="vocab-chip">friend</span>
+              <span class="vocab-chip">family</span>
+            </div>
           </article>
           <article>
-            <h3>Phrase layer</h3>
+            <h3>Fingerspelling mode</h3>
             <p>
-              Integrate VIPL-SLP/MSLR_ICCV2025 (ICCV 2025, Google Drive
-              checkpoints) for CTC-based continuous phrase recognition, then
-              fine-tune on How2Sign or WLASL pose extracts for ASL.
+              Switch the dropdown to <strong>Fingerspelling</strong>. Spell any word
+              letter-by-letter using standard ASL handshapes (A–Z). The Squeezeformer
+              model decodes the sequence when you hold still. Good for names and words
+              not in the 2000-word vocabulary.
             </p>
           </article>
         </div>

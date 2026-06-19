@@ -5,34 +5,41 @@ const WASM_ROOT = "../node_modules/@mediapipe/tasks-vision/wasm";
 const HAND_MODEL_URL = "../models/hand_landmarker.task";
 const POSE_MODEL_URL = "../models/pose_landmarker_lite.task";
 const GESTURE_MODEL_URL = "../models/gesture_recognizer.task";
+const FACE_MODEL_URL = "../models/face_landmarker.task";
 
+// 27-point skeleton selection (matches OpenHands mediapipe_holistic_minimal_27 preset)
 const HAND_PICK_INDICES = [0, 4, 5, 8, 9, 12, 13, 16, 17, 20];
 const POSE_PICK_INDICES = [0, 2, 5, 11, 12, 13, 14];
 
-// Gestures the built-in model doesn't suppress
+// Face landmark indices needed by the Kaggle fingerspelling model (76 specific points)
+const FACE_INDICES_76 = [
+  0, 61, 185, 40, 39, 37, 267, 269, 270, 409, 291, 146, 91, 181, 84, 17,
+  314, 405, 321, 375, 78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 95, 88,
+  178, 87, 14, 317, 402, 318, 324, 308, 1, 2, 98, 327, 33, 7, 163, 144,
+  145, 153, 154, 155, 133, 246, 161, 160, 159, 158, 157, 173, 263, 249, 390,
+  373, 374, 380, 381, 382, 362, 466, 388, 387, 386, 385, 384, 398,
+];
+
+// Pose landmark indices needed by the Kaggle model (12 points: shoulder→ankle)
+const POSE_INDICES_12 = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+
+// Gestures the built-in recognizer model understands (not ASL letters, but useful)
 const INFORMATIVE_GESTURES = new Set([
-  "Closed_Fist",
-  "Open_Palm",
-  "Pointing_Up",
-  "Thumb_Down",
-  "Thumb_Up",
-  "Victory",
-  "ILoveYou",
+  "Closed_Fist", "Open_Palm", "Pointing_Up",
+  "Thumb_Down", "Thumb_Up", "Victory", "ILoveYou",
 ]);
 
-function toPoint(landmark) {
-  if (!landmark) return { x: 0, y: 0, z: 0 };
-  return { x: landmark.x ?? 0, y: landmark.y ?? 0, z: landmark.z ?? 0 };
+function toPoint(lm) {
+  if (!lm) return { x: 0, y: 0, z: 0 };
+  return { x: lm.x ?? 0, y: lm.y ?? 0, z: lm.z ?? 0 };
 }
 
-function selectPoints(points, indices) {
-  return indices.map((i) => toPoint(points?.[i]));
+function selectPoints(pts, indices) {
+  return indices.map((i) => toPoint(pts?.[i]));
 }
 
 function handednessScore(handedness = []) {
-  return handedness
-    .flat()
-    .reduce((max, item) => Math.max(max, item?.score ?? 0), 0);
+  return handedness.flat().reduce((m, it) => Math.max(m, it?.score ?? 0), 0);
 }
 
 function assignHands(landmarks = [], handedness = []) {
@@ -44,12 +51,28 @@ function assignHands(landmarks = [], handedness = []) {
   return slots;
 }
 
-function buildOpenHandsPoints27(poseLandmarks, handLandmarks, handedness) {
-  const posePoints = selectPoints(poseLandmarks, POSE_PICK_INDICES);
+function buildPoints27(poseLandmarks, handLandmarks, handedness) {
   const hands = assignHands(handLandmarks, handedness);
-  const leftPoints = selectPoints(hands.Left, HAND_PICK_INDICES);
-  const rightPoints = selectPoints(hands.Right, HAND_PICK_INDICES);
-  return [...posePoints, ...leftPoints, ...rightPoints];
+  return [
+    ...selectPoints(poseLandmarks, POSE_PICK_INDICES),
+    ...selectPoints(hands.Left, HAND_PICK_INDICES),
+    ...selectPoints(hands.Right, HAND_PICK_INDICES),
+  ];
+}
+
+function buildFullFrame(poseLandmarks, handLandmarks, handedness, faceLandmarks) {
+  const hands = assignHands(handLandmarks, handedness);
+  return {
+    // 76 face landmarks in FACE_INDICES_76 order (null if no FaceLandmarker)
+    face76: faceLandmarks
+      ? FACE_INDICES_76.map((i) => toPoint(faceLandmarks[i]))
+      : null,
+    // All 21 hand landmarks per hand
+    leftHand: hands.Left ? hands.Left.map(toPoint) : Array(21).fill({ x: 0, y: 0, z: 0 }),
+    rightHand: hands.Right ? hands.Right.map(toPoint) : Array(21).fill({ x: 0, y: 0, z: 0 }),
+    // 12 pose landmarks (indices 11-22)
+    pose12: POSE_INDICES_12.map((i) => toPoint(poseLandmarks?.[i])),
+  };
 }
 
 export class VisionController {
@@ -57,7 +80,9 @@ export class VisionController {
     this.mode = "booting";
     this.handLandmarker = null;
     this.poseLandmarker = null;
+    this.faceLandmarker = null;
     this.gestureRecognizer = null;
+    this.hasFace = false;
     this.boundaryDetector = new SignBoundaryDetector(onSignReady ?? (() => {}));
     this.onGestureDetected = onGestureDetected ?? (() => {});
     this.lastVideoTime = -1;
@@ -66,13 +91,13 @@ export class VisionController {
   async init() {
     try {
       this.mode = "loading-mediapipe";
-      const visionModule = await import(MEDIAPIPE_IMPORT_URL);
-      const { FilesetResolver, HandLandmarker, PoseLandmarker, GestureRecognizer } =
-        visionModule;
+      const mod = await import(MEDIAPIPE_IMPORT_URL);
+      const { FilesetResolver, HandLandmarker, PoseLandmarker, FaceLandmarker, GestureRecognizer } = mod;
       const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
+      const cpu = (path) => ({ modelAssetPath: path, delegate: "CPU" });
 
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: HAND_MODEL_URL },
+        baseOptions: cpu(HAND_MODEL_URL),
         runningMode: "VIDEO",
         numHands: 2,
         minHandDetectionConfidence: 0.45,
@@ -81,7 +106,7 @@ export class VisionController {
       });
 
       this.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: POSE_MODEL_URL },
+        baseOptions: cpu(POSE_MODEL_URL),
         runningMode: "VIDEO",
         numPoses: 1,
         minPoseDetectionConfidence: 0.45,
@@ -89,10 +114,27 @@ export class VisionController {
         minTrackingConfidence: 0.45,
       });
 
-      // Gesture recognizer is optional — load best-effort for gesture/letter detection
+      // FaceLandmarker — needed for the fingerspelling model's face channel
+      try {
+        this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: cpu(FACE_MODEL_URL),
+          runningMode: "VIDEO",
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+        });
+        this.hasFace = true;
+      } catch {
+        console.warn("[mudra] FaceLandmarker not available — fingerspelling face channel disabled");
+      }
+
+      // GestureRecognizer — optional, best-effort
       try {
         this.gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: GESTURE_MODEL_URL },
+          baseOptions: cpu(GESTURE_MODEL_URL),
           runningMode: "VIDEO",
           numHands: 2,
           minHandDetectionConfidence: 0.5,
@@ -100,20 +142,18 @@ export class VisionController {
           minTrackingConfidence: 0.5,
         });
       } catch {
-        console.warn("[mudra] GestureRecognizer failed to load — gesture layer disabled");
+        console.warn("[mudra] GestureRecognizer not available");
       }
 
       this.mode = "continuous";
       return {
         mode: this.mode,
-        hint: "Continuous sign detection active. Sign in view of the camera.",
+        hasFace: this.hasFace,
+        hint: `Continuous detection active${this.hasFace ? " (face tracking on)" : " (no face model — fingerspelling face channel zeroed)"}.`,
       };
     } catch (error) {
       this.mode = "fallback";
-      return {
-        mode: this.mode,
-        hint: `MediaPipe failed to load: ${String(error)}`,
-      };
+      return { mode: this.mode, hasFace: false, hint: `MediaPipe failed: ${error}` };
     }
   }
 
@@ -127,9 +167,7 @@ export class VisionController {
       !this.handLandmarker ||
       !this.poseLandmarker ||
       videoElement.currentTime === this.lastVideoTime
-    ) {
-      return null;
-    }
+    ) return null;
     this.lastVideoTime = videoElement.currentTime;
 
     const handResult = this.handLandmarker.detectForVideo(videoElement, timestampMs);
@@ -139,28 +177,38 @@ export class VisionController {
     const poseLandmarks = poseResult?.landmarks?.[0] ?? [];
     const handedness = handResult?.handedness ?? [];
 
-    // Gesture/letter detection (best-effort)
+    // Face landmarks (for fingerspelling model's face channel)
+    let faceLandmarks = null;
+    if (this.faceLandmarker && handLandmarks.length > 0) {
+      const fr = this.faceLandmarker.detectForVideo(videoElement, timestampMs);
+      faceLandmarks = fr?.faceLandmarks?.[0] ?? null;
+    }
+
+    // Gesture detection (best-effort, 8 built-in gestures)
     if (this.gestureRecognizer && handLandmarks.length > 0) {
       const gr = this.gestureRecognizer.recognizeForVideo(videoElement, timestampMs);
-      const topGesture = (gr?.gestures ?? [])
+      const top = (gr?.gestures ?? [])
         .flat()
         .filter((g) => INFORMATIVE_GESTURES.has(g.categoryName))
         .sort((a, b) => b.score - a.score)[0];
-      if (topGesture && topGesture.score > 0.85) {
-        this.onGestureDetected({ gesture: topGesture.categoryName, score: topGesture.score });
+      if (top && top.score > 0.85) {
+        this.onGestureDetected({ gesture: top.categoryName, score: top.score });
       }
     }
 
-    const points27 = buildOpenHandsPoints27(poseLandmarks, handLandmarks, handedness);
-    const boundary = this.boundaryDetector.pushFrame(points27, handLandmarks.length);
+    const points27 = buildPoints27(poseLandmarks, handLandmarks, handedness);
+    const fullFrame = buildFullFrame(poseLandmarks, handLandmarks, handedness, faceLandmarks);
+
+    const boundary = this.boundaryDetector.pushFrame(points27, handLandmarks.length, fullFrame);
 
     return {
       handsDetected: handLandmarks.length,
+      hasFace: this.hasFace && faceLandmarks !== null,
       detectorState: boundary.state,
       buffered: boundary.buffered,
       velocity: boundary.velocity ?? 0,
       confidence: handednessScore(handedness),
-      overlayHands: handLandmarks.map((hand) => hand.map(toPoint)),
+      overlayHands: handLandmarks.map((h) => h.map(toPoint)),
       overlayPose: POSE_PICK_INDICES.map((i) => toPoint(poseLandmarks[i])),
       mode: this.mode,
     };
