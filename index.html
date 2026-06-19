@@ -46,31 +46,28 @@
             <video id="camera" autoplay playsinline muted></video>
             <canvas id="overlay"></canvas>
             <div class="empty-state" id="videoEmptyState">
-              Start the camera, then click record and sign inside the frame.
+              Start the camera and sign inside the frame — detection is automatic.
             </div>
           </div>
 
           <div class="controls">
             <button id="startCameraBtn" class="primary">Start camera</button>
-            <button id="stopCameraBtn" class="secondary" disabled>
-              Stop camera
-            </button>
-            <button id="recordBtn" class="accent" disabled>Record sign</button>
-            <button id="clearBtn" class="ghost">Clear</button>
+            <button id="stopCameraBtn" class="secondary" disabled>Stop camera</button>
+            <button id="clearBtn" class="ghost">Clear phrase</button>
           </div>
 
           <div class="helper-grid">
             <div>
-              <p class="helper-label">Recognition state</p>
+              <p class="helper-label">Detection state</p>
               <p id="recognitionState">Waiting for camera</p>
             </div>
             <div>
-              <p class="helper-label">Hands detected</p>
-              <p id="gestureToken">0</p>
+              <p class="helper-label">Latest word</p>
+              <p id="gestureToken">—</p>
             </div>
             <div>
-              <p class="helper-label">Sequence frames</p>
-              <p id="confidenceValue">0</p>
+              <p class="helper-label">Confidence</p>
+              <p id="confidenceValue">—</p>
             </div>
           </div>
         </section>
@@ -85,16 +82,16 @@
           </div>
 
           <div class="transcript-block">
-            <p class="block-label">Detected English</p>
+            <p class="block-label">Detected phrase (English)</p>
             <p id="englishTranscript" class="transcript">
-              Record a single ASL word to query the downloaded OpenHands model.
+              No sign detected yet.
             </p>
           </div>
 
           <div class="transcript-block">
             <p class="block-label">Translated output</p>
             <p id="translatedTranscript" class="transcript accent-text">
-              The local OpenHands checkpoint will return an English gloss after recording stops.
+              Signs will appear here as you sign.
             </p>
           </div>
 
@@ -108,15 +105,6 @@
             <ul id="sessionLog" class="session-log"></ul>
           </div>
 
-          <div class="transcript-block compact">
-            <div class="panel-header mini">
-              <p class="block-label">Demo phrase</p>
-            </div>
-            <div class="demo-controls">
-              <select id="demoPhraseSelect"></select>
-              <button id="runDemoBtn" class="secondary">Run demo phrase</button>
-            </div>
-          </div>
         </section>
       </main>
 
@@ -128,22 +116,25 @@
           <article>
             <h3>What works now</h3>
             <p>
-              Live camera capture, OpenHands-compatible pose extraction,
-              local WLASL checkpoint inference, and multilingual UI output.
+              Continuous detection: automatic sign boundary detection via wrist
+              velocity, ST-GCN word inference per segment, gesture recognition
+              layer, and phrase accumulation with multilingual output.
             </p>
           </article>
           <article>
-            <h3>What comes next</h3>
+            <h3>Letter layer</h3>
             <p>
-              Improve accuracy with signer adaptation, phrase-level models,
-              and better translation beyond isolated word glosses.
+              The built-in gesture model covers 8 shapes. For full ASL
+              fingerspelling, integrate the Kaggle ASL Fingerspelling 1st-place
+              Squeezeformer (Apache-2.0, TFLite, MediaPipe-native).
             </p>
           </article>
           <article>
-            <h3>Cost control</h3>
+            <h3>Phrase layer</h3>
             <p>
-              Keep recognition on-device and use a server only for optional
-              translation or analytics when needed.
+              Integrate VIPL-SLP/MSLR_ICCV2025 (ICCV 2025, Google Drive
+              checkpoints) for CTC-based continuous phrase recognition, then
+              fine-tune on How2Sign or WLASL pose extracts for ASL.
             </p>
           </article>
         </div>

@@ -1,6 +1,8 @@
 import { TranslationService } from "./translationService.js";
-import { DEMO_PHRASES, SUPPORTED_LANGUAGES } from "./demoPhrases.js";
+import { SUPPORTED_LANGUAGES } from "./demoPhrases.js";
 import { VisionController } from "./visionController.js";
+
+const PHRASE_IDLE_RESET_MS = 4000; // start a new phrase after 4 s of silence
 
 const elements = {
   camera: document.querySelector("#camera"),
@@ -8,12 +10,9 @@ const elements = {
   videoEmptyState: document.querySelector("#videoEmptyState"),
   startCameraBtn: document.querySelector("#startCameraBtn"),
   stopCameraBtn: document.querySelector("#stopCameraBtn"),
-  recordBtn: document.querySelector("#recordBtn"),
   clearBtn: document.querySelector("#clearBtn"),
   speakBtn: document.querySelector("#speakBtn"),
   languageSelect: document.querySelector("#languageSelect"),
-  demoPhraseSelect: document.querySelector("#demoPhraseSelect"),
-  runDemoBtn: document.querySelector("#runDemoBtn"),
   englishTranscript: document.querySelector("#englishTranscript"),
   translatedTranscript: document.querySelector("#translatedTranscript"),
   sessionLog: document.querySelector("#sessionLog"),
@@ -28,52 +27,115 @@ const elements = {
 
 const state = {
   stream: null,
-  recording: false,
   frameLoopId: 0,
   selectedLanguage: "hi",
-  latestEnglish: "",
-  visionReady: false,
   pendingInference: false,
+  phraseGlosses: [],    // accumulated glosses in current phrase
+  lastWordTime: 0,
+  latestEnglish: "",
 };
 
 const translationService = new TranslationService();
-const visionController = new VisionController();
 const drawingContext = elements.overlay.getContext("2d");
 
+// ── inference callback ────────────────────────────────────────────────────────
+
+async function handleSignReady(frames) {
+  if (state.pendingInference) return; // drop overlapping calls
+  state.pendingInference = true;
+  elements.recognitionState.textContent = "Running inference…";
+
+  try {
+    const response = await fetch("/api/infer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ frames }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) throw new Error(payload.error ?? "Inference failed");
+
+    const { gloss, score } = payload.topPrediction;
+    elements.gestureToken.textContent = gloss;
+    elements.confidenceValue.textContent = `${Math.round(score * 100)}%`;
+
+    // Accumulate into current phrase, resetting after a long pause
+    const now = Date.now();
+    if (state.phraseGlosses.length > 0 && now - state.lastWordTime > PHRASE_IDLE_RESET_MS) {
+      finalisePhrase();
+    }
+    state.phraseGlosses.push(gloss);
+    state.lastWordTime = now;
+
+    const phraseText = state.phraseGlosses.join(" ");
+    state.latestEnglish = phraseText;
+    elements.englishTranscript.textContent = phraseText;
+
+    const translated = await translationService.translate(phraseText, state.selectedLanguage);
+    elements.translatedTranscript.textContent = translated;
+    elements.speakBtn.disabled = false;
+    elements.recognitionState.textContent = "Watching…";
+  } catch (error) {
+    elements.recognitionState.textContent = "Inference error";
+    elements.englishTranscript.textContent = String(error.message ?? error);
+  } finally {
+    state.pendingInference = false;
+  }
+}
+
+function finalisePhrase() {
+  if (!state.phraseGlosses.length) return;
+  const text = state.phraseGlosses.join(" ");
+  const translated = elements.translatedTranscript.textContent;
+  addLogEntry(text, translated);
+  state.phraseGlosses = [];
+}
+
+// ── gesture callback ──────────────────────────────────────────────────────────
+
+function handleGestureDetected({ gesture, score }) {
+  elements.gestureToken.textContent = gesture;
+  elements.confidenceValue.textContent = `${Math.round(score * 100)}%`;
+}
+
+// ── vision controller ─────────────────────────────────────────────────────────
+
+const visionController = new VisionController({
+  onSignReady: handleSignReady,
+  onGestureDetected: handleGestureDetected,
+});
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+
 function populateLanguageSelect() {
-  const options = SUPPORTED_LANGUAGES.map(
+  elements.languageSelect.innerHTML = SUPPORTED_LANGUAGES.map(
     ({ code, label }) => `<option value="${code}">${label}</option>`,
-  );
-  elements.languageSelect.innerHTML = options.join("");
+  ).join("");
   elements.languageSelect.value = state.selectedLanguage;
 }
 
-function populateDemoPhraseSelect() {
-  const options = DEMO_PHRASES.map(
-    (phrase) => `<option value="${phrase.id}">${phrase.english}</option>`,
-  );
-  elements.demoPhraseSelect.innerHTML = options.join("");
-}
-
 function resizeCanvasToVideo() {
-  const width = elements.camera.videoWidth;
-  const height = elements.camera.videoHeight;
-
-  if (!width || !height) {
-    return;
+  const { videoWidth: w, videoHeight: h } = elements.camera;
+  if (w && h) {
+    elements.overlay.width = w;
+    elements.overlay.height = h;
   }
-
-  elements.overlay.width = width;
-  elements.overlay.height = height;
 }
 
-function drawStatusOverlay(landmarkSets = []) {
+const STATE_COLORS = {
+  idle: "rgba(255,255,255,0.6)",
+  signing: "rgba(201,95,55,0.9)",
+};
+
+function drawOverlay(landmarkSets = [], detectorState = "idle") {
   drawingContext.clearRect(0, 0, elements.overlay.width, elements.overlay.height);
   drawingContext.save();
   drawingContext.scale(-1, 1);
   drawingContext.translate(-elements.overlay.width, 0);
-  drawingContext.strokeStyle = "rgba(255, 248, 243, 0.85)";
-  drawingContext.lineWidth = 3;
+
+  // Guide box — orange while signing, white otherwise
+  drawingContext.strokeStyle = STATE_COLORS[detectorState] ?? STATE_COLORS.idle;
+  drawingContext.lineWidth = detectorState === "signing" ? 4 : 2;
   drawingContext.strokeRect(
     elements.overlay.width * 0.18,
     elements.overlay.height * 0.12,
@@ -81,13 +143,15 @@ function drawStatusOverlay(landmarkSets = []) {
     elements.overlay.height * 0.76,
   );
 
-  drawingContext.fillStyle = "rgba(201, 95, 55, 0.9)";
+  drawingContext.fillStyle = STATE_COLORS.signing;
   for (const hand of landmarkSets) {
     for (const point of hand) {
-      const x = point.x * elements.overlay.width;
-      const y = point.y * elements.overlay.height;
       drawingContext.beginPath();
-      drawingContext.arc(x, y, 4, 0, Math.PI * 2);
+      drawingContext.arc(
+        point.x * elements.overlay.width,
+        point.y * elements.overlay.height,
+        4, 0, Math.PI * 2,
+      );
       drawingContext.fill();
     }
   }
@@ -100,124 +164,39 @@ function setCameraLive(isLive) {
   elements.videoEmptyState.hidden = isLive;
   elements.startCameraBtn.disabled = isLive;
   elements.stopCameraBtn.disabled = !isLive;
-  elements.recordBtn.disabled = !isLive;
 }
 
-async function updateTranslation(english) {
-  state.latestEnglish = english;
-  const translated = await translationService.translate(
-    english,
-    state.selectedLanguage,
-  );
-  elements.englishTranscript.textContent = english;
-  elements.translatedTranscript.textContent = translated;
-  elements.speakBtn.disabled = false;
-}
-
-function addLogEntry(english, translated, confidence) {
+function addLogEntry(english, translated) {
   const item = document.createElement("li");
-  const timestamp = new Date().toLocaleTimeString([], {
+  const ts = new Date().toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
-  item.innerHTML = `<small>${timestamp} • ${Math.round(
-    confidence * 100,
-  )}% confidence</small>${english}<br />${translated}`;
+  item.innerHTML = `<small>${ts}</small>${english}<br />${translated}`;
   elements.sessionLog.prepend(item);
 }
 
-async function commitPhrase(phrase, confidence = 1) {
-  await updateTranslation(phrase.english);
-  addLogEntry(
-    phrase.english,
-    elements.translatedTranscript.textContent,
-    confidence,
-  );
-}
-
-function processRecognitionResult(result) {
-  if (!result) {
-    return;
-  }
-
-  commitPhrase(result.phrase, result.confidence);
-}
-
-function showClassifierPendingState(sequenceLength) {
-  elements.englishTranscript.textContent =
-    "Capturing an OpenHands-compatible pose sequence.";
-  elements.translatedTranscript.textContent =
-    `Buffered ${sequenceLength} frame${sequenceLength === 1 ? "" : "s"} for the downloaded WLASL model.`;
-  elements.speakBtn.disabled = true;
-}
-
-async function inferRecordedSequence() {
-  const frames = visionController.getSequence();
-  if (frames.length < 8) {
-    elements.englishTranscript.textContent =
-      "Recording was too short. Record a single clear ASL word for at least a second.";
-    elements.translatedTranscript.textContent =
-      "The OpenHands model needs a longer sequence.";
-    return;
-  }
-
-  state.pendingInference = true;
-  elements.recognitionState.textContent = "Running OpenHands inference";
-
-  try {
-    const response = await fetch("/api/infer", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ frames }),
-    });
-    const payload = await response.json();
-
-    if (!response.ok) {
-      throw new Error(payload.error || "Inference failed.");
-    }
-
-    elements.recognitionState.textContent = "Prediction ready";
-    elements.gestureToken.textContent = String(frames.length);
-    elements.confidenceValue.textContent = `${Math.round(
-      payload.topPrediction.score * 100,
-    )}%`;
-    await updateTranslation(payload.topPrediction.gloss);
-    addLogEntry(
-      payload.topPrediction.gloss,
-      elements.translatedTranscript.textContent,
-      payload.topPrediction.score,
-    );
-  } catch (error) {
-    elements.recognitionState.textContent = "Inference failed";
-    elements.englishTranscript.textContent = String(error.message || error);
-    elements.translatedTranscript.textContent =
-      "The local OpenHands model could not return a prediction.";
-  } finally {
-    state.pendingInference = false;
-  }
-}
+// ── frame loop ────────────────────────────────────────────────────────────────
 
 async function handleFrame() {
-  if (!state.recording || !state.stream) {
-    return;
-  }
+  if (!state.stream) return;
 
   if (elements.camera.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-    const recognition = visionController.capture(
-      elements.camera,
-      performance.now(),
-    );
+    const result = visionController.capture(elements.camera, performance.now());
 
-    if (recognition) {
-      elements.gestureToken.textContent = String(recognition.handsDetected);
-      elements.confidenceValue.textContent = String(recognition.sequenceLength);
-      drawStatusOverlay(recognition.overlayHands);
+    if (result) {
+      drawOverlay(result.overlayHands, result.detectorState);
 
-      if (recognition.handsDetected > 0) {
-        showClassifierPendingState(recognition.sequenceLength);
+      // Status line
+      if (!state.pendingInference) {
+        if (result.detectorState === "signing") {
+          elements.recognitionState.textContent = `Signing — ${result.buffered} frames`;
+        } else if (result.handsDetected > 0) {
+          elements.recognitionState.textContent = "Hands detected — watching…";
+        } else {
+          elements.recognitionState.textContent = "Watching for signs…";
+        }
       }
     }
   }
@@ -225,148 +204,104 @@ async function handleFrame() {
   state.frameLoopId = window.requestAnimationFrame(handleFrame);
 }
 
+// ── camera ────────────────────────────────────────────────────────────────────
+
 async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "user",
-        width: { ideal: 960 },
-        height: { ideal: 720 },
-      },
+      video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 } },
       audio: false,
     });
     state.stream = stream;
     elements.camera.srcObject = stream;
     await elements.camera.play();
     resizeCanvasToVideo();
-    drawStatusOverlay();
+    drawOverlay();
     setCameraLive(true);
-    elements.recognitionState.textContent = "Camera ready for OpenHands capture";
+    elements.recognitionState.textContent = "Watching for signs…";
+    handleFrame();
   } catch (error) {
     elements.recognitionState.textContent = "Camera access failed";
-    elements.englishTranscript.textContent =
-      "Camera permission was denied or unavailable.";
+    elements.englishTranscript.textContent = "Camera permission was denied or unavailable.";
     console.error(error);
   }
 }
 
-function stopRecordingLoop() {
+function stopCamera() {
   if (state.frameLoopId) {
     window.cancelAnimationFrame(state.frameLoopId);
     state.frameLoopId = 0;
   }
-}
-
-function stopCamera() {
-  stopRecordingLoop();
-  state.recording = false;
   visionController.reset();
+  finalisePhrase();
 
   if (state.stream) {
-    for (const track of state.stream.getTracks()) {
-      track.stop();
-    }
+    for (const track of state.stream.getTracks()) track.stop();
   }
-
   state.stream = null;
   elements.camera.srcObject = null;
   drawingContext.clearRect(0, 0, elements.overlay.width, elements.overlay.height);
   setCameraLive(false);
   elements.recognitionState.textContent = "Waiting for camera";
-  elements.recordBtn.textContent = "Record sign";
 }
 
-async function setRecording(recording) {
-  state.recording = recording;
-  elements.recordBtn.textContent = recording ? "Stop recording" : "Record sign";
-  elements.recognitionState.textContent = recording
-    ? "Capturing a single ASL word"
-    : "Camera ready for OpenHands capture";
-
-  if (recording) {
-    clearSession();
-    handleFrame();
-  } else {
-    stopRecordingLoop();
-    await inferRecordedSequence();
-  }
-}
+// ── clear / speak ─────────────────────────────────────────────────────────────
 
 function clearSession() {
   visionController.reset();
+  state.phraseGlosses = [];
+  state.latestEnglish = "";
   elements.englishTranscript.textContent = "No sign detected yet.";
-  elements.translatedTranscript.textContent =
-    "Record a single ASL word to query the downloaded OpenHands model.";
-  elements.gestureToken.textContent = "0";
-  elements.confidenceValue.textContent = "0";
+  elements.translatedTranscript.textContent = "Signs will appear here as you sign.";
+  elements.gestureToken.textContent = "—";
+  elements.confidenceValue.textContent = "—";
   elements.sessionLog.innerHTML = "";
   elements.speakBtn.disabled = true;
-  drawStatusOverlay();
+  drawOverlay();
 }
 
 function speakCurrentTranslation() {
   const text = elements.translatedTranscript.textContent;
-  if (!text || text === "Translation will appear here.") {
-    return;
-  }
-
+  if (!text || text === "Signs will appear here as you sign.") return;
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = state.selectedLanguage;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
 }
 
-function runSelectedDemoPhrase() {
-  const phrase = DEMO_PHRASES.find(
-    (entry) => entry.id === elements.demoPhraseSelect.value,
-  );
-  if (!phrase) {
-    return;
-  }
-
-  elements.recognitionState.textContent = "Demo phrase committed";
-  elements.gestureToken.textContent = "demo";
-  elements.confidenceValue.textContent = "manual";
-  commitPhrase(phrase, 1);
-}
+// ── event listeners ───────────────────────────────────────────────────────────
 
 elements.startCameraBtn.addEventListener("click", startCamera);
 elements.stopCameraBtn.addEventListener("click", stopCamera);
-elements.recordBtn.addEventListener("click", async () => {
-  if (!state.pendingInference) {
-    await setRecording(!state.recording);
-  }
-});
 elements.clearBtn.addEventListener("click", clearSession);
 elements.speakBtn.addEventListener("click", speakCurrentTranslation);
-elements.runDemoBtn.addEventListener("click", runSelectedDemoPhrase);
 elements.languageSelect.addEventListener("change", async (event) => {
   state.selectedLanguage = event.target.value;
   if (state.latestEnglish) {
-    await updateTranslation(state.latestEnglish);
+    const translated = await translationService.translate(
+      state.latestEnglish,
+      state.selectedLanguage,
+    );
+    elements.translatedTranscript.textContent = translated;
   }
 });
 
 window.addEventListener("resize", () => {
   resizeCanvasToVideo();
-  drawStatusOverlay();
+  drawOverlay();
 });
+window.addEventListener("beforeunload", stopCamera);
 
-window.addEventListener("beforeunload", () => {
-  stopCamera();
-});
+// ── boot ──────────────────────────────────────────────────────────────────────
 
 populateLanguageSelect();
-populateDemoPhraseSelect();
-elements.engineMode.textContent = "loading-mediapipe";
-elements.engineHint.textContent = "Loading OpenHands-compatible pose capture assets.";
+elements.engineMode.textContent = "loading";
+elements.engineHint.textContent = "Initialising MediaPipe…";
+
 visionController.init().then((status) => {
-  state.visionReady = status.mode === "openhands-pose-capture";
   elements.engineMode.textContent = status.mode;
   elements.engineHint.textContent = status.hint;
   elements.recognitionState.textContent =
-    status.mode === "openhands-pose-capture"
-      ? "Waiting for camera"
-      : "Recognition fallback active";
+    status.mode === "continuous" ? "Waiting for camera" : "Recognition unavailable";
   clearSession();
 });

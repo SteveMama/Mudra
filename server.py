@@ -40,10 +40,15 @@ class OpenHandsRuntime:
       state_dict,
       strict=False,
     )
-    if missing_keys or unexpected_keys:
+    if missing_keys:
       raise RuntimeError(
-        "OpenHands checkpoint did not load cleanly: "
-        f"{len(missing_keys)} missing, {len(unexpected_keys)} unexpected."
+        f"OpenHands checkpoint is missing {len(missing_keys)} model keys — "
+        f"architecture mismatch: {missing_keys[:5]}"
+      )
+    if unexpected_keys:
+      print(
+        f"[mudra] checkpoint has {len(unexpected_keys)} extra keys (Lightning artefacts, ignored)",
+        flush=True,
       )
     self.model.eval()
     self.normalizer = CenterAndScaleNormalize(
@@ -113,7 +118,14 @@ class MudraHandler(SimpleHTTPRequestHandler):
 
   def end_headers(self):
     self.send_header("Cache-Control", "no-store")
+    self.send_header("Access-Control-Allow-Origin", "*")
     super().end_headers()
+
+  def do_OPTIONS(self):
+    self.send_response(200)
+    self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+    self.send_header("Access-Control-Allow-Headers", "Content-Type")
+    self.end_headers()
 
   def do_POST(self):
     if self.path != "/api/infer":
